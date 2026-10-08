@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterator
 
@@ -12,6 +11,7 @@ from wreakon6.domain.transaction import (
     TransactionStatus,
     TransactionType,
 )
+from wreakon6.normalization.money import parse_money
 
 
 REQUIRED_COLUMNS = {
@@ -46,20 +46,13 @@ def _parse_datetime(value: str) -> datetime:
         ) from exc
 
 
-def _parse_amount(value: str) -> Decimal:
-    try:
-        return Decimal(value.strip())
-    except (InvalidOperation, AttributeError) as exc:
-        raise ValueError(
-            f"Invalid transaction amount: {value!r}"
-        ) from exc
-
-
-def _transaction_type(value: str, memo: str = "") -> TransactionType:
+def _transaction_type(
+    value: str,
+    memo: str = "",
+) -> TransactionType:
     value = (value or "").strip().upper()
     memo = (memo or "").strip().upper()
 
-    # The fintech source uses several names for charges/fees.
     fee_types = {
         "CROSS_BORDER",
         "CROSS_BORDER_SPREAD",
@@ -107,10 +100,15 @@ def _status(value: str) -> TransactionStatus:
         "FAILED": TransactionStatus.FAILED,
     }
 
-    return mapping.get(value, TransactionStatus.UNKNOWN)
+    return mapping.get(
+        value,
+        TransactionStatus.UNKNOWN,
+    )
 
 
-def _is_incomplete_row(row: dict[str, str | None]) -> bool:
+def _is_incomplete_row(
+    row: dict[str, str | None],
+) -> bool:
     """
     Detect a source row that does not contain enough information to
     represent a financial transaction.
@@ -134,7 +132,9 @@ def _is_incomplete_row(row: dict[str, str | None]) -> bool:
     )
 
 
-def read_fintech_csv(path: str | Path) -> Iterator[CanonicalTransaction]:
+def read_fintech_csv(
+    path: str | Path,
+) -> Iterator[CanonicalTransaction]:
     """
     Stream the fintech CSV.
 
@@ -162,7 +162,10 @@ def read_fintech_csv(path: str | Path) -> Iterator[CanonicalTransaction]:
                 f"{sorted(missing)}"
             )
 
-        for line_number, row in enumerate(reader, start=2):
+        for line_number, row in enumerate(
+            reader,
+            start=2,
+        ):
             if _is_incomplete_row(row):
                 continue
 
@@ -172,34 +175,58 @@ def read_fintech_csv(path: str | Path) -> Iterator[CanonicalTransaction]:
                     row.get("Memo", ""),
                 )
 
+                status = _status(
+                    row.get("Status", ""),
+                )
+
                 yield CanonicalTransaction(
                     source="FINTECH",
-                    source_record_id=(row.get("ID") or "").strip(),
-                    transaction_id=(row.get("TransactionId") or "").strip()
+                    source_record_id=(
+                        row.get("ID") or ""
+                    ).strip(),
+                    transaction_id=(
+                        row.get("TransactionId") or ""
+                    ).strip()
                     or None,
-                    reference=(row.get("ServiceReference") or "").strip()
+                    reference=(
+                        row.get("ServiceReference") or ""
+                    ).strip()
                     or None,
-                    account_id=(row.get("UserId") or "").strip()
+                    account_id=(
+                        row.get("UserId") or ""
+                    ).strip()
                     or None,
-                    event_at=_parse_datetime(row.get("CreatedAt", "")),
-                    value_at=_parse_datetime(row.get("UpdatedAt", "")),
-                    amount=_parse_amount(row.get("Amount", "")),
-                    currency=(row.get("Currency") or "").strip().upper(),
+                    event_at=_parse_datetime(
+                        row.get("CreatedAt", ""),
+                    ),
+                    value_at=_parse_datetime(
+                        row.get("UpdatedAt", ""),
+                    ),
+                    amount=parse_money(
+                        row.get("Amount", ""),
+                    ),
+                    currency=(
+                        row.get("Currency") or ""
+                    ).strip().upper(),
                     direction=TransactionDirection.DEBIT,
                     transaction_type=transaction_type,
-                    status=_status(row.get("Status", "")),
+                    status=status,
                     is_hold=transaction_type
                     in {
                         TransactionType.HOLD,
                         TransactionType.HOLD_RELEASE,
                     },
-                    is_reversal=_status(row.get("Status", ""))
-                    == TransactionStatus.REVERSED,
+                    is_reversal=(
+                        status == TransactionStatus.REVERSED
+                    ),
                     counterparty_reference=(
                         row.get("CardId") or ""
                     ).strip()
                     or None,
-                    narration=(row.get("Memo") or "").strip() or None,
+                    narration=(
+                        row.get("Memo") or ""
+                    ).strip()
+                    or None,
                 )
 
             except Exception as exc:
