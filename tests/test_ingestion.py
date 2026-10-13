@@ -61,3 +61,37 @@ def test_bank_reader_reads_all_records():
     count = sum(1 for _ in read_bank_xlsx(BANK_FILE))
 
     assert count == 1000
+
+def test_bank_reversal_flag_parsing():
+    import pytest
+
+    from wreakon6.ingestion.xlsx_reader import _parse_is_reversed
+
+    cases = [
+        (True, True),
+        (False, False),
+        (1, True),
+        (0, False),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("1", True),
+        ("false", False),
+        ("False", False),
+        ("FALSE", False),
+        ("no", False),
+        ("0", False),
+    ]
+
+    for raw_value, expected in cases:
+        assert _parse_is_reversed(raw_value) is expected
+
+
+def test_bank_reversal_flag_rejects_ambiguous_values():
+    import pytest
+
+    from wreakon6.ingestion.xlsx_reader import _parse_is_reversed
+
+    for raw_value in (None, "", "unknown", "maybe", 2, -1):
+        with pytest.raises(ValueError, match="Invalid reversal flag"):
+            _parse_is_reversed(raw_value)

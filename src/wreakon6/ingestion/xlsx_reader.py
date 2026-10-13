@@ -50,14 +50,35 @@ def _parse_datetime(value) -> datetime:
     if value is None:
         raise ValueError("Missing datetime")
 
-    return datetime.fromisoformat(
-        str(value).strip()
-    )
+    return datetime.fromisoformat(str(value).strip())
 
 
-def _direction(
-    value: str,
-) -> TransactionDirection:
+def _parse_is_reversed(value) -> bool:
+    """Parse explicit Boolean-like values without relying on truthiness."""
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError(f"Invalid reversal flag: {value!r}")
+
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+
+        if normalized in {"true", "yes", "y", "1"}:
+            return True
+
+        if normalized in {"false", "no", "n", "0"}:
+            return False
+
+    raise ValueError(f"Invalid reversal flag: {value!r}")
+
+
+def _direction(value: str) -> TransactionDirection:
     value = (value or "").strip().upper()
 
     if value == "D":
@@ -73,13 +94,8 @@ def _transaction_type(
     source_type: str,
     narration: str | None,
 ) -> TransactionType:
-    source_type = (
-        source_type or ""
-    ).strip().upper()
-
-    narration_upper = (
-        narration or ""
-    ).strip().upper()
+    source_type = (source_type or "").strip().upper()
+    narration_upper = (narration or "").strip().upper()
 
     if "HOLD ONLY" in narration_upper:
         return TransactionType.HOLD
@@ -105,11 +121,7 @@ def _status(
 
     value = (value or "").strip().upper()
 
-    if value in {
-        "P",
-        "POSTED",
-        "SUCCESS",
-    }:
+    if value in {"P", "POSTED", "SUCCESS"}:
         return TransactionStatus.POSTED
 
     if value == "PENDING":
@@ -127,9 +139,8 @@ def read_bank_xlsx(
     """
     Stream the bank workbook in read-only mode.
 
-    Source monetary values are normalized through the shared
-    Wreakon6 money parser. Negative source amounts are preserved
-    rather than rejected.
+    Source monetary values are normalized through the shared money parser.
+    Negative source amounts are preserved rather than rejected.
     """
 
     path = Path(path)
@@ -148,16 +159,12 @@ def read_bank_xlsx(
             )
 
         worksheet = workbook["data"]
-        rows = worksheet.iter_rows(
-            values_only=True,
-        )
+        rows = worksheet.iter_rows(values_only=True)
 
         try:
             headers = next(rows)
         except StopIteration as exc:
-            raise ValueError(
-                "Bank workbook is empty"
-            ) from exc
+            raise ValueError("Bank workbook is empty") from exc
 
         columns = {
             str(column).strip()
@@ -178,10 +185,7 @@ def read_bank_xlsx(
             for index, column in enumerate(headers)
         }
 
-        for row_number, row in enumerate(
-            rows,
-            start=2,
-        ):
+        for row_number, row in enumerate(rows, start=2):
             record = {
                 column: row[index]
                 for column, index in header_index.items()
@@ -195,7 +199,7 @@ def read_bank_xlsx(
                     narration,
                 )
 
-                is_reversed = bool(
+                is_reversed = _parse_is_reversed(
                     record["isReversed"]
                 )
 
@@ -206,20 +210,15 @@ def read_bank_xlsx(
 
                 yield CanonicalTransaction(
                     source="BANK",
-                    source_record_id=str(
-                        record["id"]
-                    ),
+                    source_record_id=str(record["id"]),
                     transaction_id=(
                         str(record["transactionId"])
                         if record["transactionId"] is not None
                         else None
                     ),
                     reference=(
-                        str(
-                            record["transactionReference"]
-                        )
-                        if record["transactionReference"]
-                        is not None
+                        str(record["transactionReference"])
+                        if record["transactionReference"] is not None
                         else None
                     ),
                     account_id=(
@@ -230,12 +229,8 @@ def read_bank_xlsx(
                     event_at=_parse_datetime(
                         record["transactionDate"]
                     ),
-                    value_at=_parse_datetime(
-                        record["valueDate"]
-                    ),
-                    amount=parse_money(
-                        record["transactionAmount"]
-                    ),
+                    value_at=_parse_datetime(record["valueDate"]),
+                    amount=parse_money(record["transactionAmount"]),
                     currency=str(
                         record["transactionCurrency"]
                     ).strip().upper(),
@@ -245,19 +240,13 @@ def read_bank_xlsx(
                     transaction_type=transaction_type,
                     status=status,
                     is_hold=(
-                        transaction_type
-                        == TransactionType.HOLD
+                        transaction_type == TransactionType.HOLD
                     ),
                     is_reversal=is_reversed,
                     counterparty_reference=(
-                        str(
-                            record[
-                                "thirdPartyTransactionReference"
-                            ]
-                        )
-                        if record[
-                            "thirdPartyTransactionReference"
-                        ] is not None
+                        str(record["thirdPartyTransactionReference"])
+                        if record["thirdPartyTransactionReference"]
+                        is not None
                         else None
                     ),
                     narration=(
